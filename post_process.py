@@ -118,7 +118,7 @@ def extract_foreground_stats(image_path):
 
 def calibrate_colors(glb_path, fg_stats, strength=0.7):
     """
-    Match GLB texture to foreground color statistics using histogram matching.
+    Match GLB texture channel means/stds to foreground statistics.
 
     Args:
         glb_path: path to input GLB
@@ -152,13 +152,8 @@ def calibrate_colors(glb_path, fg_stats, strength=0.7):
             # Blend with original
             result[:, :, c] = ch * (1 - strength) + matched * strength
 
-        # Clip and apply slight saturation boost
+        # No unconditional enhancement: strength=0 must preserve the texture.
         result = np.clip(result, 0, 255).astype(np.uint8)
-        enhanced = Image.fromarray(result)
-        from PIL import ImageEnhance
-        enhanced = ImageEnhance.Color(enhanced).enhance(1.15)
-        enhanced = ImageEnhance.Brightness(enhanced).enhance(1.05)
-        result = np.array(enhanced)
 
         print(f"  [B] Calibrated RGB mean: [{result[:,:,0].mean():.0f},{result[:,:,1].mean():.0f},{result[:,:,2].mean():.0f}]")
 
@@ -169,9 +164,7 @@ def calibrate_colors(glb_path, fg_stats, strength=0.7):
 
         mat.baseColorTexture = Image.fromarray(result)
 
-        # Fix PBR factors for better color rendering
-        mat.metallicFactor = 0.0
-        mat.roughnessFactor = 0.5
+        # Preserve the generated metallic/roughness factors; this operation edits color only.
 
     return scene
 

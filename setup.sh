@@ -1,59 +1,37 @@
-#!/bin/bash
-# TRELLIS.2 3D Generator - One-click setup
+#!/usr/bin/env bash
+# Linux installation wrapper. No checkpoints are downloaded by this script.
 set -e
 
-echo "========================================"
-echo "  TRELLIS.2 3D Generator Setup"
-echo "========================================"
-
-# Check CUDA
-if ! python3 -c "import torch; assert torch.cuda.is_available()" 2>/dev/null; then
-    echo "WARNING: CUDA not detected. GPU required for inference."
+if [[ "$1" == "--help" || "$1" == "-h" ]]; then
+    echo 'Usage: bash setup.sh [--new-env]'
+    echo 'Requires Linux, git, conda and CUDA development tools. Delegates to the official installer.'
+    exit 0
 fi
 
-# 1. Clone TRELLIS.2
-if [ ! -d "TRELLIS.2" ]; then
-    echo ""
-    echo "[1/3] Cloning TRELLIS.2..."
-    git clone https://github.com/microsoft/TRELLIS.2.git
-    cd TRELLIS.2
-    # Use mirror if GitHub blocked
-    # git clone https://kkgithub.com/microsoft/TRELLIS.2.git
+TASK_WRAPPER_ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+TASK_TRELLIS_ROOT="${TRELLIS2_ROOT:-$TASK_WRAPPER_ROOT/TRELLIS.2}"
+TASK_TRELLIS_REF="${TRELLIS2_REF:-75fbf0183001ed9876c8dbb35de6b68552ee08bd}"
+
+command -v git >/dev/null || { echo 'git is required'; exit 1; }
+command -v conda >/dev/null || { echo 'conda is required; see README'; exit 1; }
+eval "$(conda shell.bash hook)"
+
+if [[ ! -d "$TASK_TRELLIS_ROOT" ]]; then
+    git clone --recursive https://github.com/microsoft/TRELLIS.2.git "$TASK_TRELLIS_ROOT"
+    git -C "$TASK_TRELLIS_ROOT" checkout "$TASK_TRELLIS_REF"
+    git -C "$TASK_TRELLIS_ROOT" submodule update --init --recursive
 else
-    echo ""
-    echo "[1/3] TRELLIS.2 already cloned"
-    cd TRELLIS.2
+    TASK_EXISTING_REF="$(git -C "$TASK_TRELLIS_ROOT" rev-parse HEAD)"
+    if [[ "$TASK_EXISTING_REF" != "$TASK_TRELLIS_REF" ]]; then
+        echo "Existing checkout is $TASK_EXISTING_REF; expected $TASK_TRELLIS_REF."
+        echo 'Inspect your checkout and explicitly set TRELLIS2_REF to its full commit to keep that version.'
+        exit 1
+    fi
 fi
 
-# 2. Install TRELLIS.2 dependencies
-echo ""
-echo "[2/3] Installing TRELLIS.2 dependencies..."
-pip install -e . --quiet || {
-    echo "Trying with mirror..."
-    pip install -e . -i https://mirrors.aliyun.com/pypi/simple/ --quiet
-}
-
-# Install flash-attn separately (sometimes fails in requirements)
-pip install flash-attn --no-build-isolation --quiet 2>/dev/null || {
-    echo "NOTE: flash-attn install failed (may need CUDA dev tools)"
-    echo "  Inference will use slower attention backend"
-}
-
-cd ..
-
-# 3. Install our additional deps
-echo ""
-echo "[3/3] Installing additional dependencies..."
-pip install -r requirements.txt --quiet 2>/dev/null || {
-    pip install -r requirements.txt -i https://mirrors.aliyun.com/pypi/simple/ --quiet
-}
-
-# 4. Download model weights
-echo ""
-echo "========================================"
-echo "  Setup complete! Now download weights:"
-echo "  python download_weights.py"
-echo ""
-echo "  Then generate:"
-echo "  python generate.py <image> -o output.glb"
-echo "========================================"
+cd "$TASK_TRELLIS_ROOT"
+# The upstream installer is sourced so its conda activation applies to the extra dependencies.
+. ./setup.sh --basic --flash-attn --nvdiffrast --nvdiffrec --cumesh --o-voxel --flexgemm "$@"
+python -m pip install -r "$TASK_WRAPPER_ROOT/requirements.txt"
+echo 'Installation commands completed. Activate trellis2 if --new-env was used.'
+echo 'Download checkpoints separately: python download_weights.py'

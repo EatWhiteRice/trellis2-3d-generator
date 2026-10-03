@@ -1,0 +1,2 @@
+# Optional experimental rigid-body demos, installed in addition to the main environment.
+pybullet>=3.2.6

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Offline Physics Simulation Pipeline
-GLB → Trimesh normalize → VHACD convex hulls → PyBullet → result
+GLB → Z-up normalization → single convex hull → rigid PyBullet drop → result
 
 Usage:
   python physics_sim.py output_apple.glb           # single object drop
@@ -17,63 +17,16 @@ import trimesh
 # STEP 1: Mesh Prep — normalize, center, scale
 # ═══════════════════════════════════════════════════════════
 
-def prep_mesh(glb_path, target_size=0.5):
-    """
-    Load GLB, normalize to real-world scale.
-    target_size: desired max extent in meters (default 0.5m = ~apple size)
-    """
-    scene = trimesh.load(glb_path)
-    mesh = list(scene.geometry.values())[0]
+def prep_mesh(glb_path, target_size=0.5, input_up='y'):
+    from mesh_utils import load_normalized_mesh
+    return load_normalized_mesh(glb_path, target_size, input_up)
 
-    # Center at origin (centroid)
-    centroid = mesh.vertices.mean(axis=0)
-    mesh.vertices -= centroid
-
-    # Scale to target size
-    current_max_extent = (mesh.vertices.max(axis=0) - mesh.vertices.min(axis=0)).max()
-    if current_max_extent > 0:
-        scale = target_size / current_max_extent
-        mesh.vertices *= scale
-
-    # Set bottom to y=0 (ground level)
-    y_min = mesh.vertices[:, 1].min()
-    mesh.vertices[:, 1] -= y_min
-
-    print(f"  Prep: {len(mesh.vertices):,} verts, "
-          f"extent={(mesh.vertices.max(0)-mesh.vertices.min(0)).max():.3f}m, "
-          f"y_base={mesh.vertices[:,1].min():.3f}")
-
-    return mesh
 
 
 # ═══════════════════════════════════════════════════════════
-# STEP 2: Convex Decomposition (VHACD)
+# Collision uses a single convex hull inside run_simulation.
 # ═══════════════════════════════════════════════════════════
 
-def convex_decomposition(mesh, max_hulls=8):
-    """
-    Decompose mesh into convex collision hulls.
-    Falls back to single convex hull if VHACD unavailable.
-    """
-    try:
-        import vhacd
-        print("  Running VHACD convex decomposition...")
-        result = vhacd.compute_vhacd(
-            mesh.vertices, mesh.faces,
-            maxConvexHulls=max_hulls,
-            maxNumVerticesPerCH=64,
-            resolution=400000,
-        )
-        hulls = []
-        for h in result:
-            hull_mesh = trimesh.Trimesh(vertices=h[0], faces=h[1])
-            hulls.append(hull_mesh)
-        print(f"  VHACD: {len(hulls)} convex hulls")
-        return hulls
-    except ImportError:
-        print("  VHACD not available, using single convex hull")
-        hull = mesh.convex_hull
-        return [hull]
 
 
 # ═══════════════════════════════════════════════════════════
@@ -106,30 +59,19 @@ def run_simulation(meshes, labels, output_path="sim_result.glb", duration=3.0):
     initial_heights = []
 
     for i, (mesh, label) in enumerate(zip(meshes, labels)):
-        # Create collision shape from convex hull
+        # A single convex hull is an approximation; this is not articulated simulation.
         hull = mesh.convex_hull
-        hull_verts = hull.vertices.tolist()
-
-        # If VHACD available, try multi-hull
-        try:
-            hulls = convex_decomposition(mesh)
-            # Use multiple collision shapes
-            col_id = p.createCollisionShape(
-                p.GEOM_MESH, vertices=mesh.vertices.tolist(),
-                meshScale=[1, 1, 1])
-        except:
-            col_id = p.createCollisionShape(
-                p.GEOM_MESH, vertices=mesh.vertices.tolist(),
-                meshScale=[1, 1, 1])
+        col_id = p.createCollisionShape(
+            p.GEOM_MESH, vertices=hull.vertices.tolist(),
+            indices=hull.faces.reshape(-1).tolist(), meshScale=[1, 1, 1])
 
         # Visual shape (same mesh)
         vis_id = p.createVisualShape(
             p.GEOM_MESH, vertices=mesh.vertices.tolist(),
-            meshScale=[1, 1, 1],
+            indices=mesh.faces.reshape(-1).tolist(), meshScale=[1, 1, 1],
             rgbaColor=[0.8, 0.2, 0.1, 1.0])
 
         # Drop from height, spread out
-        y_min = mesh.vertices[:, 1].min()
         drop_z = 1.5 + i * 0.8
         pos = [i * 0.6 - (len(meshes)-1)*0.3, 0, drop_z]
 
@@ -173,7 +115,8 @@ def run_simulation(meshes, labels, output_path="sim_result.glb", duration=3.0):
         T[:3, 3] = pos
         transformed = mesh.copy()
         transformed.apply_transform(T)
-        final_meshes.append(transformed)
+        from mesh_utils import simulation_to_gltf
+        final_meshes.append(simulation_to_gltf(transformed))
         print(f"  [{labels[i]}] final pos={[f'{v:.3f}' for v in pos]}")
 
     p.disconnect()
@@ -200,6 +143,7 @@ def main():
     parser.add_argument("--output", default="sim_result.glb")
     parser.add_argument("--duration", type=float, default=3.0, help="Sim duration in seconds")
     parser.add_argument("--size", type=float, default=0.5, help="Target object size in meters")
+    parser.add_argument('--input-up', choices=['y', 'z'], default='y', help='GLB convention is Y-up; override nonstandard assets')
     args = parser.parse_args()
 
     # Expand with --stack
@@ -219,7 +163,7 @@ def main():
     for g in glb_list:
         label = os.path.splitext(os.path.basename(g))[0]
         print(f"  {g}")
-        mesh = prep_mesh(g, target_size=args.size)
+        mesh = prep_mesh(g, target_size=args.size, input_up=args.input_up)
         meshes.append(mesh)
         labels.append(label)
 

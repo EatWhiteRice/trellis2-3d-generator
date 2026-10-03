@@ -11,6 +11,8 @@
 
 # Output
 *.glb
+*.raw_geometry.npz
+*.metadata.json
 
 # Python
 __pycache__/

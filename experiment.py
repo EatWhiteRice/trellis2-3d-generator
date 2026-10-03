@@ -25,8 +25,8 @@ def compute_color_error(glb_path, ref_image_path):
         with open(glb_path,'rb') as f:
             f.seek(bs+bv['byteOffset'])
             tex_fg=np.array(Image.open(io.BytesIO(f.read(bv['byteLength']))).convert('RGB')).reshape(-1,3)
-    except:
-        tex_fg=ref_fg
+    except Exception as exc:
+        raise ValueError(f'Cannot read GLB base-color texture: {glb_path}') from exc
     rm=ref_fg.astype(float).mean(0); tm=tex_fg.astype(float).mean(0)
     return float(np.abs(rm-tm).mean()), rm, tm
 
@@ -51,10 +51,12 @@ def compute_edge_fill(glb_path):
             tex=np.array(Image.open(io.BytesIO(f.read(bv['byteLength']))))
         a=tex[:,:,3] if tex.shape[2]==4 else np.ones(tex.shape[:2])*255
         return float((a>10).sum()/a.size)
-    except: return 0
+    except Exception as exc:
+        raise ValueError(f'Cannot read GLB texture for edge-fill: {glb_path}') from exc
 
 def compute_bounds(mesh):
     e=mesh.vertices.max(0)-mesh.vertices.min(0)
     return float(np.prod(e)**(1/3))
 
-print('experiment.py placeholder - full version on GitHub')
+if __name__ == '__main__':
+    raise SystemExit('Statistics helpers only: a batch experiment runner is not implemented.')
